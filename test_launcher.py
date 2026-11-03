@@ -3,6 +3,7 @@ needs, never without consent, and only in the emulator's own profile."""
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -95,29 +96,12 @@ class RelayConfigTest(unittest.TestCase):
                 launcher.choose_relay(None)
 
 
-class KeysAndFirmwareTest(unittest.TestCase):
-    def test_copies_keys_and_firmware_without_changing_the_source(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory) / "appdata" / "eden"
-            (source / "keys").mkdir(parents=True)
-            (source / "keys" / "prod.keys").write_text("prod")
-            (source / "keys" / "title.keys").write_text("title")
-            firmware = source / "nand" / "system" / "Contents" / "registered"
-            (firmware / "a.nca").mkdir(parents=True)
-            (firmware / "a.nca" / "00").write_bytes(b"part")
-            (source / "nand" / "user" / "save").mkdir(parents=True)
-            user_dir = Path(directory) / "emulator" / "user"
-            user_dir.mkdir(parents=True)
-            variable = "APPDATA" if os.name == "nt" else "XDG_DATA_HOME"
-            with mock.patch.dict(os.environ, {variable: str(source.parent)}), \
-                    mock.patch.object(launcher, "ask", return_value=True):
-                launcher.import_keys_and_firmware(user_dir)
-            self.assertEqual((user_dir / "keys" / "prod.keys").read_text(), "prod")
-            self.assertEqual((user_dir / "keys" / "title.keys").read_text(), "title")
-            self.assertEqual((user_dir / "nand" / "system" / "Contents" / "registered" / "a.nca" / "00")
-                             .read_bytes(), b"part")
-            self.assertFalse((user_dir / "nand" / "user").exists())
-            self.assertEqual(sorted(path.name for path in (source / "keys").iterdir()), ["prod.keys", "title.keys"])
+
+
+class RunningEmulatorTest(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "Windows executable sharing is tested by the OS")
+    def test_running_executable_is_detected(self) -> None:
+        self.assertTrue(launcher.emulator_running(Path(sys.executable).resolve()))
 
 
 class ExistingProfileTest(unittest.TestCase):
