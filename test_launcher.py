@@ -3,7 +3,7 @@ needs, never without consent, and only in the emulator's own profile."""
 from __future__ import annotations
 
 import os
-import sys
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -101,7 +101,12 @@ class RelayConfigTest(unittest.TestCase):
 class RunningEmulatorTest(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "Windows executable sharing is tested by the OS")
     def test_running_executable_is_detected(self) -> None:
-        self.assertTrue(launcher.emulator_running(Path(sys.executable).resolve()))
+        process = subprocess.Popen(["/bin/sleep", "30"])
+        try:
+            self.assertTrue(launcher.emulator_running(Path("/bin/sleep").resolve()))
+        finally:
+            process.terminate()
+            process.wait(timeout=5)
 
 
 class ExistingProfileTest(unittest.TestCase):
