@@ -5,8 +5,8 @@ A standalone launcher and local TLS gateway for the Pokopia Cloud community serv
 You must already have a compatible Eglantine build with the private-server integration, including `private_server_gateway_port`. **Current ordinary upstream releases do not have these features**; the launcher cannot add them. The compatible emulator source is [here](https://github.com/Raikaru/Eglantine/tree/6df23c2f4b). Building it requires its dependencies; no compatible prebuilt emulator is provided by this launcher.
 
 1. Extract the launcher archive to a writable folder and run `PokopiaLauncher` (`PokopiaLauncher.exe` on Windows). Python is not required.
-2. Create or sign into your account at https://pokopia.raikaru.com/ and approve the device after comparing its fingerprint with the launcher.
-3. Select the executable from your existing compatible emulator. On macOS you can pass an `.app` using `play --emulator /path/to/eglantine.app`.
+2. Select the executable from your existing compatible emulator. On macOS you can pass an `.app` using `play --emulator /path/to/eglantine.app`.
+3. Create or sign into your account at https://pokopia.raikaru.com/ and approve the device after comparing its fingerprint with the launcher.
 4. Approve the displayed network configuration changes. Your emulator's existing profile and saves are used; an existing configuration file is backed up before it is changed. The network changes persist after the launcher exits. Restore the backup when you want to undo them.
 5. Select your own game file, or cancel to open the emulator and choose a game there. Keep the launcher open while playing.
 

@@ -47,7 +47,6 @@ import mmap
 import os
 import platform
 import secrets
-import shutil
 import ssl
 import subprocess
 import sys
@@ -102,8 +101,6 @@ EMULATOR_FEATURES = {
 # The log message of an earlier local-only test build, which blocks every public address and with it
 # the relay that game traffic between players goes through.
 LOCAL_ONLY_BUILD = b"VPS test blocked non-private guest destination"
-# Emulators of the same family keep keys and firmware in the same layout under %APPDATA%.
-KEY_SOURCE_PROFILES = ("eden", "yuzu", "citron", "suyu", "sudachi")
 STATUS_DLL_NOT_FOUND = 0xC0000135
 VC_REDIST_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
 
@@ -713,15 +710,32 @@ def check_emulator(exe: Path) -> None:
 
 
 def emulator_running(exe: Path) -> bool:
-    """Whether `exe` is running: Windows refuses to open a running program for writing (a sharing
-    violation). Opening it this way changes nothing."""
-    if os.name != "nt":
+    """Detect a running copy before changing its settings."""
+    if os.name == "nt":
+        try:
+            with exe.open("r+b"):
+                return False
+        except OSError as exc:
+            return getattr(exc, "winerror", None) == 32
+    if sys.platform.startswith("linux"):
+        for entry in Path("/proc").iterdir():
+            if entry.name.isdigit():
+                try:
+                    if (entry / "exe").samefile(exe):
+                        return True
+                except OSError:
+                    continue
         return False
-    try:
-        with exe.open("r+b"):
-            return False
-    except OSError as exc:
-        return getattr(exc, "winerror", None) == 32
+    if sys.platform == "darwin":
+        result = subprocess.run(["/bin/ps", "-axo", "comm=", "-ww"], capture_output=True,
+                                text=True, check=True)
+        for line in result.stdout.splitlines():
+            try:
+                if Path(line.strip()).samefile(exe):
+                    return True
+            except OSError:
+                continue
+    return False
 
 
 def emulator_directory(exe: Path) -> Path:
@@ -842,48 +856,6 @@ def configure_user_dir(home: Path, user_dir: Path, relay: str,
     print(f"Updated {ini}; the previous version is {backup}.")
 
 
-def import_keys_and_firmware(user_dir: Path) -> None:
-    """Offers to copy the tester's decryption keys and firmware from the profile of an emulator of the
-    same family into `user_dir` if it has none, and otherwise says how to install them."""
-    keys = user_dir / "keys"
-    firmware = user_dir / "nand" / "system" / "Contents" / "registered"
-    need_keys = not (keys / "prod.keys").is_file()
-    need_firmware = not firmware.is_dir() or not any(firmware.iterdir())
-    if not need_keys and not need_firmware:
-        return
-    if os.name == "nt":
-        base = Path(os.environ["APPDATA"]) if os.environ.get("APPDATA") else None
-    else:
-        base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
-    sources = [base / name for name in KEY_SOURCE_PROFILES] if base else []
-    source = next((path for path in sources if (path / "keys" / "prod.keys").is_file()), None)
-    if source is not None:
-        source_firmware = source / "nand" / "system" / "Contents" / "registered"
-        copy_keys = need_keys
-        copy_firmware = need_firmware and source_firmware.is_dir() and any(source_firmware.iterdir())
-        items = " and ".join(item for item, wanted in (("decryption keys", copy_keys),
-                                                         ("firmware", copy_firmware)) if wanted)
-        if items and ask(f"Copy your {items} from {source} into the emulator profile in {user_dir}? "
-                         f"Nothing in {source} changes."):
-            if copy_keys:
-                keys.mkdir(parents=True, exist_ok=True)
-                for path in sorted((source / "keys").glob("*.keys")):
-                    if not (keys / path.name).exists():
-                        shutil.copy2(path, keys / path.name)
-                need_keys = False
-            if copy_firmware:
-                print("Copying the firmware...")
-                if firmware.is_dir():
-                    firmware.rmdir()  # empty, and copytree needs a new directory
-                shutil.copytree(source_firmware, firmware)
-                need_firmware = False
-            print(f"Copied the {items}.")
-    if need_keys:
-        print("The emulator profile has no decryption keys yet: in the emulator, choose Tools > Install "
-              "Decryption Keys and pick your prod.keys.")
-    if need_firmware:
-        print("The emulator profile has no firmware: if the game needs it, choose Tools > Install "
-              "Firmware in the emulator.")
 
 
 def find_emulator(given: Path | None, settings: dict) -> Path:
@@ -946,6 +918,12 @@ def emulator_profile(exe: Path) -> tuple[Path, Path]:
 
 def play(args: argparse.Namespace) -> None:
     home: Path = args.home
+    settings = load_settings(home)
+    emulator = find_emulator(args.emulator, settings)
+    check_emulator(emulator)
+    if emulator_running(emulator):
+        sys.exit(f"Close the emulator ({emulator}) first, then start the launcher again: the emulator "
+                 f"saves its settings when it exits, which would undo the launcher's changes.")
     make_home(home)
     config = read_config(home)
     if config is None:
@@ -966,12 +944,6 @@ def play(args: argparse.Namespace) -> None:
             sys.exit(f"The server still does not accept this PC: {reason}. Ask the operator whether your "
                      f"account is enabled.")
 
-    settings = load_settings(home)
-    emulator = find_emulator(args.emulator, settings)
-    check_emulator(emulator)
-    if emulator_running(emulator):
-        sys.exit(f"Close the emulator ({emulator}) first, then start the launcher again: the emulator "
-                 f"saves its settings when it exits, which would undo the launcher's changes.")
     user_dir, config_dir = emulator_profile(emulator)
     try:
         print(f"Using the emulator's existing profile: {user_dir}")
