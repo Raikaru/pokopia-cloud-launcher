@@ -727,14 +727,20 @@ def emulator_running(exe: Path) -> bool:
                     continue
         return False
     if sys.platform == "darwin":
-        result = subprocess.run(["/bin/ps", "-axo", "comm=", "-ww"], capture_output=True,
+        import ctypes
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
+        libproc.proc_pidpath.argtypes = (ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32)
+        libproc.proc_pidpath.restype = ctypes.c_int
+        result = subprocess.run(["/bin/ps", "-axo", "pid="], capture_output=True,
                                 text=True, check=True)
-        for line in result.stdout.splitlines():
-            try:
-                if Path(line.strip()).samefile(exe):
-                    return True
-            except OSError:
-                continue
+        for pid in result.stdout.split():
+            path = ctypes.create_string_buffer(4096)
+            if libproc.proc_pidpath(int(pid), path, len(path)) > 0:
+                try:
+                    if Path(os.fsdecode(path.value)).samefile(exe):
+                        return True
+                except OSError:
+                    continue
     return False
 
 
