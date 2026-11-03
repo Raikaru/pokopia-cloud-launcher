@@ -151,7 +151,7 @@ class MacBundleTest(unittest.TestCase):
             with mock.patch.object(launcher.sys, "platform", "darwin"):
                 selected = launcher.find_emulator(package / "eglantine.app", {})
                 self.assertEqual(selected, executable.resolve())
-                self.assertEqual(launcher.emulator_directory(selected), package)
+                self.assertTrue(launcher.emulator_directory(selected).samefile(package))
 
 
 class CheckEmulatorTest(unittest.TestCase):
