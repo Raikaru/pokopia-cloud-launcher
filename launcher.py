@@ -10,9 +10,8 @@
 
 play does everything a tester needs, asking only for what it cannot find: it links this PC if it is
 not linked yet (or its link expired), checks that the server accepts this PC, checks that the chosen
-emulator is a compatible build, configures that emulator's own portable profile (the user\\ folder
-next to it, so no other profile is touched), starts the gateway and the emulator, and stops the
-gateway when the emulator exits.
+emulator is a compatible build, configures its existing profile with consent, starts the gateway
+and emulator, and stops the gateway when the emulator exits.
 
 link opens the account portal in the browser. There you sign in with your passkey (or create an
 account) and approve this PC; the portal then issues a client certificate for a key that is created
@@ -50,6 +49,7 @@ import platform
 import secrets
 import shutil
 import ssl
+import subprocess
 import sys
 import time
 import traceback
@@ -196,6 +196,17 @@ def ask(question: str) -> bool:
             return False
 
 
+def child_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    if getattr(sys, "frozen", False) and sys.platform.startswith("linux"):
+        original = env.pop("LD_LIBRARY_PATH_ORIG", None)
+        if original is None:
+            env.pop("LD_LIBRARY_PATH", None)
+        else:
+            env["LD_LIBRARY_PATH"] = original
+    return env
+
+
 def choose_file(title: str, kinds: list[tuple[str, str]]) -> Path | None:
     """Asks for a file in an Open dialog, or in the console if Tk is missing; None if none chosen."""
     if not interactive():
@@ -204,19 +215,24 @@ def choose_file(title: str, kinds: list[tuple[str, str]]) -> Path | None:
         import tkinter
         from tkinter import filedialog
     except ImportError:
-        answer = input(f"{title} (type its path or drag it here, then press Enter; Enter alone skips): ")
-        answer = answer.strip().strip('"')
-        return Path(answer) if answer else None
-    print(f"{title}: choose it in the window that opens.")
-    root = tkinter.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    try:
-        chosen = filedialog.askopenfilename(parent=root, title=title,
-                                            filetypes=kinds + [("All files", "*")])
-    finally:
-        root.destroy()
-    return Path(chosen) if chosen else None
+        tkinter = None
+    if tkinter is not None:
+        try:
+            root = tkinter.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            try:
+                chosen = filedialog.askopenfilename(parent=root, title=title,
+                                                    filetypes=kinds + [("All files", "*")])
+            finally:
+                root.destroy()
+            return Path(chosen) if chosen else None
+        except tkinter.TclError:
+            pass
+    answer = input(f"{title} (type its path or drag it here, then press Enter; Enter alone skips): ").strip()
+    if len(answer) >= 2 and answer[0] == answer[-1] and answer[0] in ("'", '"'):
+        answer = answer[1:-1]
+    return Path(answer) if answer else None
 
 
 def load_settings(home: Path) -> dict:
@@ -472,7 +488,13 @@ def link(home: Path, portal: str, name: str | None = None) -> dict:
     fingerprint = " ".join(csr_sha256[i:i + 4] for i in range(0, 16, 4)).upper()
     print(f"Linking this PC as {name!r}. The portal must show the key fingerprint {fingerprint}.")
     print(f"If no browser opens, open this address on this PC:\n  {url}")
-    webbrowser.open(url)
+    if getattr(sys, "frozen", False) and sys.platform.startswith("linux"):
+        try:
+            subprocess.Popen(["xdg-open", url], env=child_environment())
+        except OSError:
+            pass  # The URL is printed above for manual opening.
+    else:
+        webbrowser.open(url)
     code = receiver.wait(LINK_TIMEOUT_SECONDS)
     if code is None:
         sys.exit("Timed out waiting for the approval in the browser.")
@@ -659,7 +681,8 @@ async def play_session(home: Path, emulator: Path, game: Path | None) -> int:
     servers = await start_gateway(home, GATEWAY_ADDRESS, [GATEWAY_PORT])
     command = [str(emulator)] + (["-g", str(game)] if game else [])
     try:
-        process = await asyncio.create_subprocess_exec(*command, cwd=str(emulator.parent))
+        process = await asyncio.create_subprocess_exec(
+            *command, cwd=str(emulator_directory(emulator)), env=child_environment())
     except OSError as exc:
         sys.exit(f"Could not start {emulator}: {exc}")
     print("The emulator is running. Keep this window open while you play; it closes when the emulator "
@@ -683,11 +706,10 @@ def check_emulator(exe: Path) -> None:
     except (OSError, ValueError) as exc:
         sys.exit(f"Cannot read {exe}: {exc}")
     if missing:
-        sys.exit(f"{exe} is not a compatible emulator build: it lacks {', '.join(missing)}. Use the "
-                 f"{EMULATOR_NAME} that came with this launcher.")
+        sys.exit(f"{exe} is not a compatible emulator build: it lacks {', '.join(missing)}. "
+                 "Install a build with private-server support; the launcher cannot add it.")
     if local_only:
-        sys.exit(f"{exe} is a local-only test build: it blocks every public address, including the relay "
-                 f"that connects players. Use the {EMULATOR_NAME} that came with this launcher.")
+        sys.exit(f"{exe} is a local-only test build: it blocks every public address, including the relay.")
 
 
 def emulator_running(exe: Path) -> bool:
@@ -700,6 +722,14 @@ def emulator_running(exe: Path) -> bool:
             return False
     except OSError as exc:
         return getattr(exc, "winerror", None) == 32
+
+
+def emulator_directory(exe: Path) -> Path:
+    """The portable profile belongs next to a macOS app bundle, not inside it."""
+    if sys.platform == "darwin" and exe.parent.name == "MacOS" and \
+            exe.parent.parent.name == "Contents" and exe.parent.parent.parent.suffix == ".app":
+        return exe.parent.parent.parent.parent
+    return exe.parent
 
 
 def ini_string(value: str) -> str:
@@ -771,9 +801,9 @@ def update_ini(text: str, section: str, values: dict[str, str]) -> tuple[str, li
     return newline.join(lines) + newline, changes
 
 
-def configure_user_dir(home: Path, user_dir: Path, relay: str) -> None:
-    """Makes the emulator that uses `user_dir` trust the gateway and send the game to it. Changes to
-    an existing config file are shown and confirmed first, and the previous file is kept."""
+def configure_user_dir(home: Path, user_dir: Path, relay: str,
+                       config_dir: Path | None = None) -> None:
+    """Configure an existing emulator profile; back up and ask before changing an existing config."""
     ensure_gateway_cert(home)
     ca = (home / "gateway-ca.der").read_bytes()
     ca_path = user_dir / "certs" / GATEWAY_CA_NAME
@@ -782,7 +812,7 @@ def configure_user_dir(home: Path, user_dir: Path, relay: str) -> None:
         write_file(ca_path, ca)
         print(f"Installed the gateway CA as {ca_path}.")
 
-    ini = user_dir / "config" / "qt-config.ini"
+    ini = (config_dir or user_dir / "config") / "qt-config.ini"
     values = emulator_settings(ca_path, relay)
     try:
         original = ini.read_bytes()
@@ -821,8 +851,11 @@ def import_keys_and_firmware(user_dir: Path) -> None:
     need_firmware = not firmware.is_dir() or not any(firmware.iterdir())
     if not need_keys and not need_firmware:
         return
-    appdata = os.environ.get("APPDATA")
-    sources = [Path(appdata) / name for name in KEY_SOURCE_PROFILES] if appdata else []
+    if os.name == "nt":
+        base = Path(os.environ["APPDATA"]) if os.environ.get("APPDATA") else None
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    sources = [base / name for name in KEY_SOURCE_PROFILES] if base else []
     source = next((path for path in sources if (path / "keys" / "prod.keys").is_file()), None)
     if source is not None:
         source_firmware = source / "nand" / "system" / "Contents" / "registered"
@@ -854,21 +887,26 @@ def import_keys_and_firmware(user_dir: Path) -> None:
 
 
 def find_emulator(given: Path | None, settings: dict) -> Path:
-    """--emulator, else the one next to the launcher, else the one used last time, else one the
-    tester chooses."""
+    """Use the explicit or previously selected emulator, or ask the player to select one."""
+    def executable(path: Path) -> Path:
+        if sys.platform == "darwin" and path.suffix == ".app" and path.is_dir():
+            return path / "Contents" / "MacOS" / "eglantine"
+        return path
+
     if given is not None:
-        if not given.is_file():
-            sys.exit(f"{given} does not exist.")
-        return given.resolve()
+        candidate = executable(given)
+        if not candidate.is_file():
+            sys.exit(f"{candidate} does not exist.")
+        return candidate.resolve()
     saved = Path(settings["emulator"]) if settings.get("emulator") else None
-    for path in (program_dir() / EMULATOR_NAME, saved):
-        if path is not None and path.is_file():
-            return path.resolve()
-    chosen = choose_file(f"Choose the compatible emulator ({EMULATOR_NAME})",
+    if saved is not None and saved.is_file():
+        return saved.resolve()
+    chosen = choose_file(f"Choose your compatible emulator executable ({EMULATOR_NAME})",
                          [("Programs", "*.exe")] if os.name == "nt" else [("All files", "*")])
-    if chosen is None or not chosen.is_file():
-        sys.exit(f"No emulator chosen. Keep the launcher next to {EMULATOR_NAME}, or pass --emulator.")
-    return chosen.resolve()
+    candidate = executable(chosen) if chosen else None
+    if candidate is None or not candidate.is_file():
+        sys.exit("No emulator chosen. Select your existing compatible emulator or pass --emulator.")
+    return candidate.resolve()
 
 
 def find_game(given: Path | None, settings: dict) -> Path | None:
@@ -890,6 +928,20 @@ def find_game(given: Path | None, settings: dict) -> Path | None:
 
 
 # --- Commands ----------------------------------------------------------------------------------
+
+
+def emulator_profile(exe: Path) -> tuple[Path, Path]:
+    """Resolve the portable or standard Eglantine profile without creating a new portable profile."""
+    portable = emulator_directory(exe) / "user"
+    if portable.is_dir():
+        return portable, portable / "config"
+    if os.name == "nt":
+        base = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+        data = base / "eden"
+        return data, data / "config"
+    data_base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    config_base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return data_base / "eden", config_base / "eden"
 
 
 def play(args: argparse.Namespace) -> None:
@@ -920,15 +972,10 @@ def play(args: argparse.Namespace) -> None:
     if emulator_running(emulator):
         sys.exit(f"Close the emulator ({emulator}) first, then start the launcher again: the emulator "
                  f"saves its settings when it exits, which would undo the launcher's changes.")
-    # The emulator uses a user folder next to it instead of %APPDATA%\eden: that is the separate
-    # profile for playing on this server, so no other profile changes.
-    user_dir = emulator.parent / "user"
+    user_dir, config_dir = emulator_profile(emulator)
     try:
-        if not user_dir.is_dir():
-            user_dir.mkdir()
-            print(f"Created a separate emulator profile in {user_dir}; no other profile changes.")
-        configure_user_dir(home, user_dir, choose_relay(args.relay))
-        import_keys_and_firmware(user_dir)
+        print(f"Using the emulator's existing profile: {user_dir}")
+        configure_user_dir(home, user_dir, choose_relay(args.relay), config_dir)
     except OSError as exc:
         sys.exit(f"Cannot set up the emulator profile in {user_dir}: {exc}")
     game = find_game(args.game, settings)
@@ -978,7 +1025,7 @@ def configure(args: argparse.Namespace) -> None:
         configure_user_dir(args.home, user_dir, choose_relay(args.relay))
     except OSError as exc:
         sys.exit(f"Cannot set up the emulator profile in {user_dir}: {exc}")
-    print(f"{user_dir} sends the game to the gateway on {GATEWAY_ADDRESS}:443.")
+    print(f"{user_dir} sends the game to the gateway on {GATEWAY_ADDRESS}:{GATEWAY_PORT}.")
 
 
 def status(args: argparse.Namespace) -> None:
@@ -1004,8 +1051,7 @@ def main() -> None:
     play_parser = commands.add_parser("play", help="link if needed, set up the emulator and play (default)")
     play_parser.add_argument("--portal", help="portal address, if none is packaged with the launcher")
     play_parser.add_argument("--emulator", type=Path,
-                             help=f"compatible emulator (default: {EMULATOR_NAME} next to the launcher, "
-                                  f"else the one used last time)")
+                             help="path to the existing compatible emulator; asks if not provided or saved")
     play_parser.add_argument("--game", type=Path, help="game file to start (default: the one used last time)")
     play_parser.add_argument("--relay", help="operator's relay policy (default: packaged relay.txt)")
     link_parser = commands.add_parser("link", help="link this PC to your account")

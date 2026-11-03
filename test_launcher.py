@@ -108,7 +108,8 @@ class KeysAndFirmwareTest(unittest.TestCase):
             (source / "nand" / "user" / "save").mkdir(parents=True)
             user_dir = Path(directory) / "emulator" / "user"
             user_dir.mkdir(parents=True)
-            with mock.patch.dict(os.environ, {"APPDATA": str(source.parent)}), \
+            variable = "APPDATA" if os.name == "nt" else "XDG_DATA_HOME"
+            with mock.patch.dict(os.environ, {variable: str(source.parent)}), \
                     mock.patch.object(launcher, "ask", return_value=True):
                 launcher.import_keys_and_firmware(user_dir)
             self.assertEqual((user_dir / "keys" / "prod.keys").read_text(), "prod")
@@ -117,6 +118,40 @@ class KeysAndFirmwareTest(unittest.TestCase):
                              .read_bytes(), b"part")
             self.assertFalse((user_dir / "nand" / "user").exists())
             self.assertEqual(sorted(path.name for path in (source / "keys").iterdir()), ["prod.keys", "title.keys"])
+
+
+class ExistingProfileTest(unittest.TestCase):
+    def test_prefers_existing_portable_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exe = root / "eglantine"
+            (root / "user").mkdir()
+            self.assertEqual(launcher.emulator_profile(exe), (root / "user", root / "user" / "config"))
+
+    def test_global_profile_does_not_create_portable_user(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exe = root / "program" / "eglantine"
+            env = ({"APPDATA": str(root / "data")} if os.name == "nt" else
+                   {"XDG_DATA_HOME": str(root / "data"), "XDG_CONFIG_HOME": str(root / "config")})
+            with mock.patch.dict(os.environ, env):
+                data, config = launcher.emulator_profile(exe)
+            self.assertEqual(data, root / "data" / "eden")
+            self.assertEqual(config, (data / "config" if os.name == "nt" else root / "config" / "eden"))
+            self.assertFalse((exe.parent / "user").exists())
+
+
+class MacBundleTest(unittest.TestCase):
+    def test_finds_bundle_and_keeps_profile_outside_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory)
+            executable = package / "eglantine.app" / "Contents" / "MacOS" / "eglantine"
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"test")
+            with mock.patch.object(launcher.sys, "platform", "darwin"):
+                selected = launcher.find_emulator(package / "eglantine.app", {})
+                self.assertEqual(selected, executable.resolve())
+                self.assertEqual(launcher.emulator_directory(selected), package)
 
 
 class CheckEmulatorTest(unittest.TestCase):
