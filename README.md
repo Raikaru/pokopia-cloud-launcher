@@ -8,7 +8,9 @@ You must already have a compatible Eglantine build with the private-server integ
 2. Select the executable from your existing compatible emulator. On macOS you can pass an `.app` using `play --emulator /path/to/eglantine.app`.
 3. Create or sign into your account at https://pokopia.raikaru.com/ and approve the device after comparing its fingerprint with the launcher.
 4. Approve the displayed network configuration changes. Your emulator's existing profile and saves are used; an existing configuration file is backed up before it is changed. The network changes persist after the launcher exits. Restore the backup when you want to undo them.
-5. Select your own game file, or cancel to open the emulator and choose a game there. Keep the launcher open while playing.
+5. Select your own `.nup` file, or for loose files select `exefs/main`. Cancel to open the emulator
+   and choose a game there. NUP loading also requires emulator support for NUP. Keep the launcher
+   open while playing.
 
 The Windows executable is unsigned; SmartScreen may warn. The macOS launcher is not notarized and Gatekeeper may block it. Linux x86_64 builds require glibc 2.35 or newer; the macOS build targets Apple Silicon.
 
