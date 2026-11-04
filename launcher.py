@@ -896,8 +896,10 @@ def find_game(given: Path | None, settings: dict) -> Path | None:
         return given.resolve()
     if settings.get("game") and Path(settings["game"]).is_file():
         return Path(settings["game"])
-    chosen = choose_file("Choose your Pokopia game file (Cancel opens the emulator without a game)",
-                         [("Switch games", "*.nsp *.xci *.nca"), ("All files", "*")])
+    chosen = choose_file("Choose a .nup file or the loose game's exefs/main "
+                         "(Cancel opens the emulator without a game)",
+                         [("NUP or loose main", "*.nup *.NUP main"),
+                          ("Other Switch games", "*.nsp *.xci *.nca")])
     if chosen is None:
         return None
     if not chosen.is_file():
