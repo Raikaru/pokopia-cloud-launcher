@@ -28,6 +28,9 @@ jobs:
         run: python -m pip install -r requirements-launcher.txt pyinstaller
       - name: Run launcher tests
         run: python -m unittest test_launcher test_emulator_download
+      - name: Download and verify the public Windows emulator
+        if: runner.os == 'Windows'
+        run: python -c "import tempfile; from pathlib import Path; import emulator_download, launcher; print(emulator_download.download_emulator(Path(tempfile.mkdtemp()), launcher.check_emulator))"
       - name: Build and smoke test launcher
         run: python build_launcher.py ${{ matrix.platform }}
       - uses: actions/upload-artifact@v4
