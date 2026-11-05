@@ -913,7 +913,30 @@ def choose_play_emulator(home: Path, given: Path | None, settings: dict) -> Path
         sys.exit("A compatible emulator is required. Select one or obtain a build from "
                  "https://github.com/notsapinho/Eglantine/releases.")
     from emulator_download import download_emulator
-    return download_emulator(home, check_emulator)
+    replacement = download_emulator(home, check_emulator)
+    reuse_portable_profile(candidate, replacement)
+    return replacement
+
+
+def reuse_portable_profile(previous: Path | None, replacement: Path) -> None:
+    """Keep a selected portable profile when switching executables, without copying its data."""
+    if previous is None:
+        return
+    original = emulator_directory(previous) / "user"
+    if not original.is_dir():
+        return
+    target = emulator_directory(replacement) / "user"
+    try:
+        if target.exists() or target.is_symlink():
+            if not target.samefile(original):
+                sys.exit(f"{target} already points to a different profile; it was left unchanged. "
+                         f"Choose a compatible emulator that uses {original} instead.")
+        else:
+            target.symlink_to(original.resolve(), target_is_directory=True)
+    except OSError as exc:
+        sys.exit(f"Cannot link the downloaded emulator to your existing portable profile {original}: {exc}. "
+                 "Your profile was not changed. Choose a compatible emulator that already uses it.")
+    print(f"Using your existing portable emulator profile: {original}")
 
 
 def find_game(given: Path | None, settings: dict) -> Path | None:
