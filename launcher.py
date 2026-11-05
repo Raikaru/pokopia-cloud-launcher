@@ -887,6 +887,35 @@ def find_emulator(given: Path | None, settings: dict) -> Path:
     return candidate.resolve()
 
 
+def choose_play_emulator(home: Path, given: Path | None, settings: dict) -> Path:
+    """Use a compatible emulator or offer to obtain the public private-server build."""
+    saved = Path(settings["emulator"]) if settings.get("emulator") else None
+    bundled = program_dir() / EMULATOR_NAME
+    candidate = given or (saved if saved is not None and saved.is_file() else None)
+    if candidate is None and bundled.is_file():
+        candidate = bundled
+    if candidate is None and ask("Do you already have an Eglantine build with private-server support?"):
+        try:
+            candidate = find_emulator(None, {})
+        except SystemExit as exc:
+            print(exc)
+    if candidate is not None:
+        candidate = find_emulator(candidate, settings)
+        try:
+            check_emulator(candidate)
+            return candidate
+        except SystemExit as exc:
+            print(exc)
+
+    print("Djihads80's upstream Eglantine does not include the private-server integration. "
+          "notsapinho's Eglantine builds are checked for that support before installation.")
+    if not ask("Download a compatible build from https://github.com/notsapinho/Eglantine/releases?"):
+        sys.exit("A compatible emulator is required. Select one or obtain a build from "
+                 "https://github.com/notsapinho/Eglantine/releases.")
+    from emulator_download import download_emulator
+    return download_emulator(home, check_emulator)
+
+
 def find_game(given: Path | None, settings: dict) -> Path | None:
     """--game, else the one used last time, else one the tester chooses; None opens the emulator
     without starting a game."""
@@ -926,13 +955,12 @@ def emulator_profile(exe: Path) -> tuple[Path, Path]:
 
 def play(args: argparse.Namespace) -> None:
     home: Path = args.home
+    make_home(home)
     settings = load_settings(home)
-    emulator = find_emulator(args.emulator, settings)
-    check_emulator(emulator)
+    emulator = choose_play_emulator(home, args.emulator, settings)
     if emulator_running(emulator):
         sys.exit(f"Close the emulator ({emulator}) first, then start the launcher again: the emulator "
                  f"saves its settings when it exits, which would undo the launcher's changes.")
-    make_home(home)
     config = read_config(home)
     if config is None:
         print("This PC is not linked to an account yet. In the browser window that opens, sign in (or "
