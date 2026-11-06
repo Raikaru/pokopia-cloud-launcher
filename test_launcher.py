@@ -125,8 +125,8 @@ class ExistingProfileTest(unittest.TestCase):
                    {"XDG_DATA_HOME": str(root / "data"), "XDG_CONFIG_HOME": str(root / "config")})
             with mock.patch.dict(os.environ, env):
                 data, config = launcher.emulator_profile(exe)
-            self.assertEqual(data, root / "data" / "eden")
-            self.assertEqual(config, (data / "config" if os.name == "nt" else root / "config" / "eden"))
+            self.assertEqual(data, root / "data" / "eglantine")
+            self.assertEqual(config, (data / "config" if os.name == "nt" else root / "config" / "eglantine"))
             self.assertFalse((exe.parent / "user").exists())
 
     @unittest.skipIf(os.name == "nt", "Windows may not permit creating unprivileged symbolic links")

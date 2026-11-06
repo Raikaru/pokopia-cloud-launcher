@@ -969,11 +969,11 @@ def emulator_profile(exe: Path) -> tuple[Path, Path]:
         return portable, portable / "config"
     if os.name == "nt":
         base = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
-        data = base / "eden"
+        data = base / "eglantine"
         return data, data / "config"
     data_base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
     config_base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    return data_base / "eden", config_base / "eden"
+    return data_base / "eglantine", config_base / "eglantine"
 
 
 def play(args: argparse.Namespace) -> None:
